@@ -40,6 +40,14 @@ def _read_xlsx_safe(path):
             return pd.DataFrame()
 
 
+def _read_xlsx_safe_sheet(path, sheet):
+    try:
+        return pd.read_excel(path, sheet_name=sheet, engine='openpyxl')
+    except Exception as e:
+        logger.error(f"xlsx sheet {sheet} failed {path}: {e}")
+        return pd.DataFrame()
+
+
 def load_data():
     global data_cache
     try:
@@ -81,10 +89,12 @@ def load_data():
 
         data_cache['wgcna'] = {
             'module_assignments': pd.read_csv(os.path.join(DATA_DIR,'wgcna','consensus_module_assignments.csv')),
-            'main_heatmap': _read_xlsx_safe(os.path.join(DATA_DIR,'wgcna','consensus_main_heatmap_data.xlsx')),
-            'test_heatmap': _read_xlsx_safe(os.path.join(DATA_DIR,'wgcna','consensus_test_heatmap_data.xlsx')),
+            'main_corr':   _read_xlsx_safe_sheet(os.path.join(DATA_DIR,'wgcna','consensus_main_heatmap_data.xlsx'), 0),
+            'main_pval':   _read_xlsx_safe_sheet(os.path.join(DATA_DIR,'wgcna','consensus_main_heatmap_data.xlsx'), 1),
+            'test_corr':   _read_xlsx_safe_sheet(os.path.join(DATA_DIR,'wgcna','consensus_test_heatmap_data.xlsx'), 0),
+            'test_pval':   _read_xlsx_safe_sheet(os.path.join(DATA_DIR,'wgcna','consensus_test_heatmap_data.xlsx'), 1),
         }
-        logger.info(f"  WGCNA main: {data_cache['wgcna']['main_heatmap'].shape}")
+        logger.info(f"  WGCNA main: {data_cache['wgcna']['main_corr'].shape}")
 
         data_cache['corr_index'] = {}
         for grp in ['CN', 'EOD', 'LOD']:
@@ -140,44 +150,46 @@ def _query_correlation(protein_id, group, top_n=10):
     } for t in tuples[:top_n]]
 
 
-def _parse_heatmap_row(row, hm_cols):
+def _parse_heatmap_row(corr_row, pval_row, hm_cols):
+    """Parse heatmap row using separate correlation and p-value rows.
+    - hm_cols: columns from the correlation sheet (excluding 'Module')
+    - pval_row: corresponding row from p-value sheet (same Module, different col names)
+    Cell-type cols have _pval suffix in pval sheet; study_ cols have no p-value.
+    Correlation sheet may have duplicate-renamed cols (EOD.1, EOAD.1) which are ignored.
+    """
     traits = []
-    processed = set()
-    p_cols = {c for c in hm_cols if '.' in c and c.split('.')[-1].isdigit()}
-    p_map = {}
-    for pc in p_cols:
-        base = '.'.join(pc.split('.')[:-1])
-        p_map[base] = pc
-    study_cols = {c for c in hm_cols if c.startswith('study_')}
-    for col in hm_cols:
-        if col == 'Module' or col in processed:
-            continue
-        if col in p_cols:
-            processed.add(col)
-            continue
-        if col in CELL_TYPE_COLS:
-            val = row.get(col)
-            traits.append({'trait': col, 'type': 'cell_type_ora',
-                           'p_value': _safe(float(val)) if pd.notna(val) else None,
-                           'correlation': None, 'n_studies': None})
-            processed.add(col)
-        elif col in study_cols:
-            val = row.get(col)
-            traits.append({'trait': col, 'type': 'conservancy',
-                           'n_studies': _safe(float(val)) if pd.notna(val) else None,
-                           'correlation': None, 'p_value': None})
-            processed.add(col)
+    # Build p-value lookup from pval_row by position (same order as corr sheet)
+    # pval sheet cols (excl Module) align positionally with corr sheet cols (excl Module)
+    pval_cols = [c for c in (pval_row.index.tolist() if pval_row is not None else []) if c != 'Module']
+    corr_cols_clean = [c for c in hm_cols if c != 'Module']
+    # Build positional map: corr_col -> pval value
+    pval_by_pos = {}
+    for i, cc in enumerate(corr_cols_clean):
+        if i < len(pval_cols) and pval_row is not None:
+            pval_by_pos[cc] = pval_row.get(pval_cols[i])
         else:
-            corr_val = row.get(col)
-            p_col = p_map.get(col)
-            p_val = row.get(p_col) if p_col else None
+            pval_by_pos[cc] = None
+    # Skip duplicate-renamed cols (pandas adds .1, .2 suffix for duplicate names)
+    skip = {c for c in corr_cols_clean if '.' in c and c.split('.')[-1].isdigit()}
+    for col in corr_cols_clean:
+        if col in skip:
+            continue
+        corr_val = corr_row.get(col)
+        if col in CELL_TYPE_COLS:
+            pval = pval_by_pos.get(col)
+            traits.append({'trait': col, 'type': 'cell_type_ora',
+                           'p_value': _safe(float(pval)) if pval is not None and pd.notna(pval) else None,
+                           'correlation': None, 'n_studies': None})
+        elif col.startswith('study_'):
+            traits.append({'trait': col, 'type': 'conservancy',
+                           'n_studies': _safe(float(corr_val)) if corr_val is not None and pd.notna(corr_val) else None,
+                           'correlation': None, 'p_value': None})
+        else:
+            pval = pval_by_pos.get(col)
             traits.append({'trait': col, 'type': 'trait_corr',
-                           'correlation': _safe(float(corr_val)) if pd.notna(corr_val) else None,
-                           'p_value': _safe(float(p_val)) if p_col and pd.notna(p_val) else None,
+                           'correlation': _safe(float(corr_val)) if corr_val is not None and pd.notna(corr_val) else None,
+                           'p_value': _safe(float(pval)) if pval is not None and pd.notna(pval) else None,
                            'n_studies': None})
-            processed.add(col)
-            if p_col:
-                processed.add(p_col)
     return traits
 
 
@@ -395,19 +407,17 @@ def get_protein_detail(protein_id):
 @app.route('/api/modules')
 def get_modules():
     try:
-        main_hm  = data_cache['wgcna']['main_heatmap']
-        mod_asgn = data_cache['wgcna']['module_assignments']
-        # Build a map from module number prefix (e.g. 'M5') to module_assignments Module_Name
-        # module_assignments Module_Name format: M5_pink  -> prefix M5
+        main_corr = data_cache['wgcna']['main_corr']
+        mod_asgn  = data_cache['wgcna']['module_assignments']
         prefix_to_asgn = {}
         for mn in mod_asgn['Module_Name'].unique():
-            prefix = mn.split('_')[0]  # e.g. 'M5'
+            prefix = mn.split('_')[0]
             prefix_to_asgn[prefix] = mn
         modules = []
-        for _, row in main_hm.iterrows():
-            mname  = row['Module']                   # e.g. M5_Proteasome
-            prefix = mname.split('_')[0]             # e.g. M5
-            asgn_name = prefix_to_asgn.get(prefix)  # e.g. M5_pink
+        for _, row in main_corr.iterrows():
+            mname  = row['Module']
+            prefix = mname.split('_')[0]
+            asgn_name = prefix_to_asgn.get(prefix)
             color_src  = asgn_name.split('_')[1] if asgn_name and '_' in asgn_name else mname.split('_')[1] if '_' in mname else mname
             cnt = len(mod_asgn[mod_asgn['Module_Name'] == asgn_name]) if asgn_name else 0
             modules.append({'module_name': mname, 'color': color_src,
@@ -419,20 +429,23 @@ def get_modules():
 @app.route('/api/module/<module_name>')
 def get_module_detail(module_name):
     try:
-        main_hm  = data_cache['wgcna']['main_heatmap']
-        test_hm  = data_cache['wgcna']['test_heatmap']
-        mod_asgn = data_cache['wgcna']['module_assignments']
-        main_row = main_hm[main_hm['Module'] == module_name]
-        test_row = test_hm[test_hm['Module'] == module_name]
+        main_corr = data_cache['wgcna']['main_corr']
+        main_pval = data_cache['wgcna']['main_pval']
+        test_corr = data_cache['wgcna']['test_corr']
+        test_pval = data_cache['wgcna']['test_pval']
+        mod_asgn  = data_cache['wgcna']['module_assignments']
+        main_row  = main_corr[main_corr['Module'] == module_name]
+        test_row  = test_corr[test_corr['Module'] == module_name] if not test_corr.empty else pd.DataFrame()
         if main_row.empty:
             return jsonify({'error': 'Module not found'}), 404
-        main_row = main_row.iloc[0]
-        test_row = test_row.iloc[0] if not test_row.empty else None
-        main_cols = [c for c in main_hm.columns if c != 'Module']
-        test_cols = [c for c in test_hm.columns  if c != 'Module'] if test_row is not None else []
-        train_traits = _parse_heatmap_row(main_row, main_cols)
-        test_traits  = _parse_heatmap_row(test_row, test_cols) if test_row is not None else []
-        # Match proteins by module number prefix
+        main_corr_row = main_row.iloc[0]
+        main_pval_row = main_pval[main_pval['Module'] == module_name].iloc[0] if not main_pval.empty and (main_pval['Module'] == module_name).any() else None
+        test_corr_row = test_row.iloc[0] if not test_row.empty else None
+        test_pval_row = test_pval[test_pval['Module'] == module_name].iloc[0] if test_corr_row is not None and not test_pval.empty and (test_pval['Module'] == module_name).any() else None
+        main_cols = [c for c in main_corr.columns if c != 'Module']
+        test_cols = [c for c in test_corr.columns  if c != 'Module'] if test_corr_row is not None else []
+        train_traits = _parse_heatmap_row(main_corr_row, main_pval_row, main_cols)
+        test_traits  = _parse_heatmap_row(test_corr_row, test_pval_row, test_cols) if test_corr_row is not None else []
         prefix = module_name.split('_')[0]
         asgn_name = None
         for mn in mod_asgn['Module_Name'].unique():
