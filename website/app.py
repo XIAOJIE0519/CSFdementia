@@ -95,6 +95,9 @@ def load_data():
             logger.info(f'  Loading correlation {grp}...')
             df = pd.read_csv(fpath, low_memory=False,
                              usecols=['Protein1','Protein2','Pearson_meta','P_value','FDR_BH_Stratified','N_Studies'])
+            # Sort by abs correlation descending, keep only top 10 per protein
+            df['_abs'] = df['Pearson_meta'].abs()
+            df = df.sort_values('_abs', ascending=False)
             idx = {}
             for row in df.itertuples(index=False):
                 p1, p2 = row.Protein1, row.Protein2
@@ -106,13 +109,10 @@ def load_data():
                 }
                 if p1 not in idx: idx[p1] = []
                 if p2 not in idx: idx[p2] = []
-                idx[p1].append({'partner': p2, **entry})
-                idx[p2].append({'partner': p1, **entry})
-            # pre-sort by abs correlation
-            for k in idx:
-                idx[k].sort(key=lambda x: abs(x['correlation'] or 0), reverse=True)
-                idx[k] = idx[k][:20]  # keep top 20 per protein
+                if len(idx[p1]) < 10: idx[p1].append({'partner': p2, **entry})
+                if len(idx[p2]) < 10: idx[p2].append({'partner': p1, **entry})
             data_cache['corr_index'][grp] = idx
+            del df  # free memory immediately
             logger.info(f'  Correlation {grp}: {len(idx)} proteins indexed')
 
         mp = os.path.join(DATA_DIR,'machine','unified_LogisticRegression.pkl')
@@ -472,6 +472,8 @@ if __name__ == '__main__':
     else:
         logger.error("Data load failed.")
 else:
+    # WSGI mode (gunicorn): load data in master process when using --preload,
+    # or in each worker otherwise. Use --preload flag with gunicorn for best performance.
     logger.info("WSGI startup: loading data...")
     if not load_data():
         logger.error("Data load failed!")
