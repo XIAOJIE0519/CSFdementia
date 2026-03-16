@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Protein Detail - {{ protein_id }}</title>
+    <link rel="icon" type="image/png" href="/data/figure/logo.png">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+</head>
+<body>
+<nav class="navbar">
+    <div class="container">
+        <div class="logo"><div>
+            <h1 data-i18n="title">CSF Proteomics Dementia Database</h1>
+            <div class="subtitle" data-i18n="subtitle">脑脊液蛋白组学痴呆数据库</div>
+        </div></div>
+        <div class="nav-links">
+            <div class="theme-switcher">
+                <button onclick="toggleTheme('light')" class="active" id="theme-light" title="Light Mode">☀️</button>
+                <button onclick="toggleTheme('dark')" id="theme-dark" title="Dark Mode">🌙</button>
+            </div>
+            <div class="language-switcher">
+                <button onclick="switchLanguage('zh')" class="active" id="lang-zh">中文</button>
+                <button onclick="switchLanguage('en')" id="lang-en">English</button>
+            </div>
+            <a href="/" data-i18n="back-home">返回首页</a>
+            <a href="https://luanlab.top" target="_blank">LuanLab</a>
+        </div>
+    </div>
+</nav>
+<div class="container">
+    <div class="card">
+        <h3><span data-i18n="protein-info-title">蛋白质信息</span>: <span id="protein-name" style="color:var(--primary-color);">{{ protein_id }}</span></h3>
+        <div id="protein-info"></div>
+        <div class="external-links" id="external-links"></div>
+    </div>
+    <div class="card">
+        <h3><span data-i18n="expression-trend-title">差异表达趋势（各研究）</span></h3>
+        <div id="expression-line-chart" style="height:500px;"></div>
+    </div>
+    <div class="card">
+        <h3><span data-i18n="meta-analysis-title">Meta分析结果</span></h3>
+        <div class="table-container">
+            <table id="de-table">
+                <thead><tr>
+                    <th data-i18n="comparison">比较组</th>
+                    <th data-i18n="n-studies">研究数量</th>
+                    <th data-i18n="weighted-effect">加权效应值</th>
+                    <th>95% CI</th>
+                    <th>FDR</th>
+                </tr></thead>
+                <tbody id="de-table-body"></tbody>
+            </table>
+        </div>
+    </div>
+    <div class="card">
+        <h3><span data-i18n="study-expression-title">各研究中的表达情况</span></h3>
+        <div class="table-container">
+            <table id="study-table">
+                <thead><tr>
+                    <th data-i18n="comparison">比较组</th>
+                    <th data-i18n="study">研究</th>
+                    <th>Log2FC</th>
+                    <th>FDR</th>
+                </tr></thead>
+                <tbody id="study-table-body"></tbody>
+            </table>
+        </div>
+    </div>
+    <div class="card">
+        <h3><span data-i18n="correlation-title">蛋白质相关性分析（CN / EOD / LOD 各前10个）</span></h3>
+        <div id="correlation-tabs" style="display:flex;gap:0.5rem;margin-bottom:1rem;">
+            <button class="btn" id="corr-tab-CN"  onclick="switchCorrTab('CN')"  style="padding:0.4rem 1rem;font-size:0.85rem;">CN</button>
+            <button class="btn" id="corr-tab-EOD" onclick="switchCorrTab('EOD')" style="padding:0.4rem 1rem;font-size:0.85rem;">EOD</button>
+            <button class="btn" id="corr-tab-LOD" onclick="switchCorrTab('LOD')" style="padding:0.4rem 1rem;font-size:0.85rem;">LOD</button>
+        </div>
+        <div class="table-container">
+            <table id="correlation-table">
+                <thead><tr>
+                    <th data-i18n="correlated-protein">相关蛋白</th>
+                    <th data-i18n="correlation-coef">相关系数</th>
+                    <th>FDR</th>
+                    <th data-i18n="n-studies">研究数量</th>
+                    <th data-i18n="action">操作</th>
+                </tr></thead>
+                <tbody id="correlation-table-body"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+<script src="{{ url_for('static', filename='js/i18n.js') }}"></script>
+<script src="{{ url_for('static', filename='js/theme.js') }}"></script>
+<script>
+const proteinId = "{{ protein_id }}";
+let proteinData = null;
+let _corrByGroup = {};
+
+document.addEventListener('DOMContentLoaded', () => loadProteinDetail());
+window.addEventListener('languageChanged', () => { if (proteinData) displayProteinDetail(proteinData); });
+window.addEventListener('themeChanged', () => { if (proteinData) plotExpressionLines(proteinData.differential_expression); });
+
+async function loadProteinDetail() {
+    try {
+        const r = await fetch(`/api/protein/${encodeURIComponent(proteinId)}`);
+        if (!r.ok) { if (r.status===404) { alert('未找到该蛋白质'); window.location.href='/'; } return; }
+        proteinData = await r.json();
+        displayProteinDetail(proteinData);
+    } catch(e) { console.error(e); alert('数据加载失败'); }
+}
+
+function displayProteinDetail(data) {
+    let info = '';
+    if (data.module) info += `<p style="margin:1rem 0;"><strong>${t('module-label')||'所属模块'}:</strong> <span style="color:var(--primary-color);">${data.module.module_name}</span> (${data.module.module})</p>`;
+    document.getElementById('protein-info').innerHTML = info;
+    let links = '';
+    if (data.external_links) {
+        if (data.external_links.uniprot)  links += `<a href="${data.external_links.uniprot}" target="_blank" class="external-link">🔗 UniProt</a>`;
+        if (data.external_links.genecard) links += `<a href="${data.external_links.genecard}" target="_blank" class="external-link">🔗 GeneCards</a>`;
+        links += `<a href="https://www.ncbi.nlm.nih.gov/gene/?term=${encodeURIComponent(proteinId.split('|')[0])}" target="_blank" class="external-link">🔗 NCBI</a>`;
+    }
+    document.getElementById('external-links').innerHTML = links;
+    plotExpressionLines(data.differential_expression);
+    displayMetaAnalysis(data.meta_analysis);
+    displayStudyResults(data.differential_expression);
+    displayCorrelations(data.correlations_by_group || {});
+}
+
+function plotExpressionLines(deData) {
+    const colors = getChartColors();
+    const SC = {'study_1':'#ef4444','study_2':'#f59e0b','study_3_Olink':'#10b981','study_3_Soma':'#14b8a6',
+                'study_4':'#06b6d4','study_5':'#0ea5e9','study_6':'#3b82f6','study_7':'#6366f1',
+                'study_8':'#8b5cf6','study_9':'#a855f7','study_10':'#d946ef','study_11':'#ec4899'};
+    const SO = ['study_1','study_2','study_3_Olink','study_3_Soma','study_4','study_5',
+                'study_6','study_7','study_8','study_9','study_10','study_11'];
+    const sd = {};
+    for (const [comp, studies] of Object.entries(deData)) {
+        studies.forEach(s => {
+            if (!sd[s.study]) sd[s.study]={x:[],y:[],color:SC[s.study]||'#94a3b8'};
+            sd[s.study].x.push(comp); sd[s.study].y.push(s.log2fc);
+        });
+    }
+    const traces = [];
+    SO.forEach(sn => { if (sd[sn]) traces.push({x:sd[sn].x,y:sd[sn].y,mode:'markers',name:sn,marker:{size:10,color:sd[sn].color,line:{width:1,color:colors.background}}}); });
+    Plotly.newPlot('expression-line-chart', traces, {
+        xaxis:{title:'Comparison',gridcolor:colors.gridColor,color:colors.textColor},
+        yaxis:{title:'Log2 Fold Change',zeroline:true,zerolinewidth:2,zerolinecolor:'#ef4444',gridcolor:colors.gridColor,color:colors.textColor},
+        plot_bgcolor:colors.background,paper_bgcolor:colors.background,font:{color:colors.textColor,family:'Poppins'},
+        hovermode:'closest',legend:{orientation:'v',x:1.02,y:1,xanchor:'left'},margin:{t:40,r:160,b:80,l:60}
+    },{responsive:true,displaylogo:false});
+}
+
+function displayMetaAnalysis(metaData) {
+    const tbody = document.getElementById('de-table-body');
+    tbody.innerHTML = '';
+    const fmt = n => (n===null||n===undefined)?'N/A':Number(n.toPrecision(3));
+    const fb = v => v!==null&&v<0.05?`<span class="badge" style="background:#10b981;">${fmt(v)}</span>`:fmt(v);
+    if (!Object.keys(metaData).length) { tbody.innerHTML='<tr><td colspan="5" style="text-align:center;">无数据</td></tr>'; return; }
+    for (const [comp,d] of Object.entries(metaData)) {
+        const tr=document.createElement('tr');
+        tr.innerHTML=`<td>${comp}</td><td>${d.n_studies||'N/A'}</td><td>${fmt(d.weighted_effect)}</td><td>${fmt(d.ci_lower)} – ${fmt(d.ci_upper)}</td><td>${fb(d.fdr)}</td>`;
+        tbody.appendChild(tr);
+    }
+}
+
+function displayStudyResults(deData) {
+    const tbody = document.getElementById('study-table-body');
+    tbody.innerHTML = '';
+    const fmt = n => (n===null||n===undefined)?'N/A':Number(n.toPrecision(3));
+    const fb = v => v!==null&&v<0.05?`<span class="badge" style="background:#10b981;">${fmt(v)}</span>`:fmt(v);
+    for (const [comp,studies] of Object.entries(deData)) {
+        studies.forEach(s => {
+            const tr=document.createElement('tr');
+            tr.innerHTML=`<td>${comp}</td><td>${s.study}</td><td>${fmt(s.log2fc)}</td><td>${fb(s.fdr)}</td>`;
+            tbody.appendChild(tr);
+        });
+    }
+}
+
+function displayCorrelations(corrByGroup) {
+    _corrByGroup = corrByGroup || {};
+    switchCorrTab('CN');
+}
+
+function switchCorrTab(group) {
+    ['CN','EOD','LOD'].forEach(g => {
+        const btn=document.getElementById('corr-tab-'+g);
+        if(!btn) return;
+        btn.style.background = g===group?'var(--primary-color)':'var(--bg-secondary)';
+        btn.style.color = g===group?'white':'var(--text-primary)';
+    });
+    const tbody=document.getElementById('correlation-table-body');
+    tbody.innerHTML='';
+    const corrs=(_corrByGroup[group])||[];
+    const fmt=n=>(n===null||n===undefined)?'N/A':Number(n.toPrecision(3));
+    const fb=v=>v!==null&&v<0.05?`<span class="badge" style="background:#10b981;">${fmt(v)}</span>`:fmt(v);
+    if(!corrs.length){tbody.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--text-secondary);">暂无相关性数据</td></tr>';return;}
+    corrs.forEach(corr=>{
+        const tr=document.createElement('tr');
+        const cv=corr.correlation||0,cc=cv>0?'#ef4444':'#3b82f6';
+        tr.innerHTML=`<td>${corr.partner}</td><td style="font-weight:700;color:${cc};font-family:'JetBrains Mono',monospace;">${fmt(cv)}</td><td>${fb(corr.fdr)}</td><td>${corr.n_studies||'N/A'}</td><td><a href="/protein/${encodeURIComponent(corr.partner)}" class="external-link" style="font-size:0.8rem;">${t('view')||'查看'}</a></td>`;
+        tbody.appendChild(tr);
+    });
+}
+</script>
+</body>
+</html>

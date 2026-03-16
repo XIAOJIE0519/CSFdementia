@@ -1,0 +1,31 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.env
+*~
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Large correlation files - too large for GitHub (>100MB each)
+data/correlation/
+
+# Legacy entries
+data/correlation_meta_analysis.csv
+data/combined_differential_expression.csv
+.venv
+venv/
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo

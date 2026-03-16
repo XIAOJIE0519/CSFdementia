@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSF Proteomics Dementia Database</title>
+    <link rel="icon" type="image/png" href="/data/figure/logo.png">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+</head>
+<body>
+<nav class="navbar"><div class="container">
+    <div class="logo"><div>
+        <h1 data-i18n="title">CSF Proteomics Dementia Database</h1>
+        <div class="subtitle" data-i18n="subtitle">脑脊液蛋白组学痴呆数据库</div>
+    </div></div>
+    <div class="nav-links">
+        <div class="theme-switcher">
+            <button onclick="toggleTheme('light')" class="active" id="theme-light">☀️</button>
+            <button onclick="toggleTheme('dark')" id="theme-dark">🌙</button>
+        </div>
+        <div class="tabs-inline">
+            <button class="tab active" data-tab="protein" data-i18n="tab-protein">Protein</button>
+            <button class="tab" data-tab="module" data-i18n="tab-module">Module</button>
+            <button class="tab" data-tab="ml" data-i18n="tab-ml">Machine Learning</button>
+            <button class="tab" data-tab="source" data-i18n="tab-source">Source Data</button>
+        </div>
+        <div class="language-switcher">
+            <button onclick="switchLanguage('zh')" class="active" id="lang-zh">中文</button>
+            <button onclick="switchLanguage('en')" id="lang-en">English</button>
+        </div>
+        <a href="https://luanlab.top" target="_blank">LuanLab</a>
+    </div>
+</div></nav>
+<div class="container">
+
+<div class="tab-content active" id="protein-tab">
+    <div class="search-section"><h2 data-i18n="search-title">蛋白质查询</h2>
+        <div class="search-box">
+            <input type="text" id="protein-search" class="search-input" placeholder="e.g. APOE" autocomplete="off">
+            <button class="btn btn-primary" onclick="searchProtein()"><span data-i18n="search-button">搜索</span></button>
+            <div id="search-suggestions" class="search-suggestions" style="display:none;"></div>
+        </div>
+    </div>
+    <div class="card"><h3 data-i18n="volcano-title">差异表达火山图</h3>
+        <p style="color:var(--text-secondary);margin-bottom:1.5rem;">点击查看详细结果和富集分析（FDR&lt;0.05）</p>
+        <div class="volcano-grid" id="volcano-grid"></div>
+    </div>
+</div>
+
+<div class="tab-content" id="module-tab">
+    <div class="card"><h3 data-i18n="module-title">WGCNA 共识模块分析</h3>
+        <div class="module-grid" id="module-grid"></div>
+    </div>
+    <div id="module-detail" style="display:none;">
+        <div class="card"><h3><span data-i18n="module-detail-title">模块详情</span>: <span id="module-name"></span></h3>
+            <div class="stats-grid"><div class="stat-card"><div class="stat-value" id="module-protein-count">0</div><div class="stat-label">蛋白数量</div></div></div>
+        </div>
+        <div class="card"><h3 data-i18n="trait-correlation">性状相关性分析</h3>
+            <div id="trait-correlation-container"></div>
+        </div>
+        <div class="card"><h3 data-i18n="module-proteins">模块内蛋白列表</h3>
+            <div class="table-container"><table id="module-protein-table">
+                <thead><tr><th data-i18n="protein-id">蛋白质ID</th><th data-i18n="action">操作</th></tr></thead>
+                <tbody id="module-protein-table-body"></tbody>
+            </table></div>
+        </div>
+    </div>
+</div>
+
+<div class="tab-content" id="ml-tab">
+    <div class="card"><h3 data-i18n="ml-title">早发性痴呆 CSF 蛋白风险评分</h3>
+        <p style="color:var(--text-secondary);margin-bottom:1.5rem;" data-i18n="ml-intro">输入15个核心蛋白的标准化z-score值，输出EOD风险评分及SHAP解释图。阈值=0.55，LODO AUC=0.877，外部验证AUC=0.860。</p>
+        <div class="stats-grid">
+            <div class="stat-card"><div class="stat-value">0.877</div><div class="stat-label" data-i18n="ml-lodo-auc">LODO AUC</div></div>
+            <div class="stat-card"><div class="stat-value">0.860</div><div class="stat-label" data-i18n="ml-ext-auc">外部验证 AUC</div></div>
+            <div class="stat-card"><div class="stat-value">15</div><div class="stat-label" data-i18n="ml-core-proteins">核心蛋白</div></div>
+            <div class="stat-card"><div class="stat-value">0.55</div><div class="stat-label" data-i18n="ml-threshold-label">判断阈值</div></div>
+        </div>
+    </div>
+    <div class="card"><h3 data-i18n="ml-input-title">输入蛋白表达值</h3>
+        <p style="color:var(--text-secondary);margin-bottom:1.5rem;font-size:0.9rem;" data-i18n="ml-input-desc">请输入各蛋白经 <strong>per-cohort StandardScaler</strong> 标准化的 z-score 值。</p>
+        <div class="ml-protein-grid" id="ml-protein-inputs"></div>
+        <div style="display:flex;gap:1rem;margin-top:1.5rem;flex-wrap:wrap;">
+            <button class="btn btn-primary" onclick="runMLPrediction()" id="ml-predict-btn"><span data-i18n="ml-predict">计算风险评分</span></button>
+            <button class="btn" onclick="clearMLInputs()" style="background:var(--bg-secondary);"><span data-i18n="ml-clear">清空</span></button>
+            <button class="btn" onclick="fillMLDemo()" style="background:var(--bg-secondary);"><span data-i18n="ml-demo">示例数据</span></button>
+        </div>
+    </div>
+    <div class="card" id="ml-result-card" style="display:none;"><h3 data-i18n="ml-result-title">预测结果</h3>
+        <div id="ml-score-display" class="ml-score-display"></div>
+        <div id="ml-verdict" class="ml-verdict"></div>
+        <h4 style="margin:1.5rem 0 0.8rem;" data-i18n="ml-shap-title">SHAP 力图</h4>
+        <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:1rem;" data-i18n="ml-shap-desc">红色：增加风险；蓝色：降低风险。</p>
+        <div style="overflow-x:auto;"><img id="ml-shap-img" src="" alt="SHAP" style="max-width:100%;border-radius:8px;"></div>
+    </div>
+</div>
+
+<div class="tab-content" id="source-tab">
+    <div class="card"><h3 data-i18n="source-title">数据与代码开放获取</h3>
+        <div style="background:rgba(239,68,68,0.1);border-left:4px solid #ef4444;padding:1.5rem;border-radius:12px;margin-bottom:2rem;">
+            <p><strong data-i18n="source-warning-1">请勿爬取本网站数据！</strong> <span data-i18n="source-warning-2">所有数据和代码已在GitHub开源，请通过正规渠道获取。</span></p>
+        </div>
+        <a href="https://github.com/XIAOJIE0519/CSFdementia" target="_blank" class="btn btn-primary"><span data-i18n="source-visit-github">访问 GitHub 仓库</span></a>
+    </div>
+</div>
+
+</div>
+
+<!-- DE Modal -->
+<div id="de-modal" class="modal" style="display:none;"><div class="modal-content">
+    <div class="modal-header">
+        <h2 id="de-modal-title"></h2>
+        <button class="modal-close" onclick="closeDeModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+        <div class="stats-grid" style="margin-bottom:1.5rem;">
+            <div class="stat-card"><div class="stat-value" id="de-total-proteins">0</div><div class="stat-label" data-i18n="total-proteins">总蛋白数</div></div>
+            <div class="stat-card"><div class="stat-value" id="de-sig-proteins">0</div><div class="stat-label" data-i18n="sig-proteins">显著差异蛋白</div></div>
+        </div>
+        <div id="volcano-chart" style="height:500px;margin-bottom:2rem;"></div>
+        <h3>Top 50 显著差异蛋白 (FDR&lt;0.05)</h3>
+        <div class="table-container" style="max-height:400px;overflow-y:auto;margin-bottom:2rem;">
+            <table><thead><tr>
+                <th data-i18n="protein">蛋白质</th><th>Log2FC</th><th>FDR</th><th data-i18n="n-studies">研究数量</th><th data-i18n="action">操作</th>
+            </tr></thead><tbody id="sig-protein-table-body"></tbody></table>
+        </div>
+        <h3>GO &amp; KEGG 富集分析 Top 50 (ORA, 按FDR排序)</h3>
+        <div class="table-container" style="max-height:380px;overflow-y:auto;margin-bottom:2rem;">
+            <table><thead><tr>
+                <th>来源</th><th>通路/功能</th><th>基因比例</th><th>FDR</th><th>基因数</th>
+            </tr></thead><tbody id="gokegg-table-body"></tbody></table>
+        </div>
+        <h3>GSEA 富集分析 Top 10 (按FDR排序)</h3>
+        <div class="table-container" style="max-height:280px;overflow-y:auto;">
+            <table><thead><tr>
+                <th>通路/功能</th><th>NES</th><th>FDR</th><th>基因数</th>
+            </tr></thead><tbody id="gsea-table-body"></tbody></table>
+        </div>
+    </div>
+</div></div>
+
+<script src="{{ url_for('static', filename='js/i18n.js') }}"></script>
+<script src="{{ url_for('static', filename='js/theme.js') }}"></script>
+<script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
