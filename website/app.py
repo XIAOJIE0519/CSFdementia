@@ -113,9 +113,13 @@ def load_data():
             del df
             logger.info(f'  Correlation {grp}: {len(idx)} proteins indexed')
 
-        mp = os.path.join(DATA_DIR,'machine','unified_LogisticRegression.pkl')
-        data_cache['ml_model'] = joblib.load(mp) if os.path.exists(mp) else None
-        logger.info(f"  ML model: {'loaded' if data_cache['ml_model'] else 'NOT FOUND'}")
+        try:
+            mp = os.path.join(DATA_DIR,'machine','unified_LogisticRegression.pkl')
+            data_cache['ml_model'] = joblib.load(mp) if os.path.exists(mp) else None
+            logger.info(f"  ML model: {'loaded' if data_cache['ml_model'] else 'NOT FOUND'}")
+        except Exception as e:
+            logger.warning(f"  ML model load failed (non-fatal): {e}")
+            data_cache['ml_model'] = None
         logger.info("All data loaded.")
         return True
     except Exception as e:
