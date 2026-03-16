@@ -95,24 +95,22 @@ def load_data():
             logger.info(f'  Loading correlation {grp}...')
             df = pd.read_csv(fpath, low_memory=False,
                              usecols=['Protein1','Protein2','Pearson_meta','P_value','FDR_BH_Stratified','N_Studies'])
-            # Sort by abs correlation descending, keep only top 10 per protein
             df['_abs'] = df['Pearson_meta'].abs()
-            df = df.sort_values('_abs', ascending=False)
+            df.sort_values('_abs', ascending=False, inplace=True)
+            # Build compact tuple index: {protein: [(partner, corr, pval, fdr, n_studies), ...]}
             idx = {}
             for row in df.itertuples(index=False):
                 p1, p2 = row.Protein1, row.Protein2
-                entry = {
-                    'correlation': _safe(float(row.Pearson_meta)) if row.Pearson_meta==row.Pearson_meta else None,
-                    'p_value':     _safe(float(row.P_value))      if row.P_value==row.P_value           else None,
-                    'fdr':         _safe(float(row.FDR_BH_Stratified)) if row.FDR_BH_Stratified==row.FDR_BH_Stratified else None,
-                    'n_studies':   int(row.N_Studies)              if row.N_Studies==row.N_Studies       else None,
-                }
+                corr = float(row.Pearson_meta) if row.Pearson_meta==row.Pearson_meta else None
+                pval = float(row.P_value)      if row.P_value==row.P_value           else None
+                fdr  = float(row.FDR_BH_Stratified) if row.FDR_BH_Stratified==row.FDR_BH_Stratified else None
+                ns   = int(row.N_Studies)      if row.N_Studies==row.N_Studies       else None
                 if p1 not in idx: idx[p1] = []
                 if p2 not in idx: idx[p2] = []
-                if len(idx[p1]) < 10: idx[p1].append({'partner': p2, **entry})
-                if len(idx[p2]) < 10: idx[p2].append({'partner': p1, **entry})
+                if len(idx[p1]) < 10: idx[p1].append((p2, corr, pval, fdr, ns))
+                if len(idx[p2]) < 10: idx[p2].append((p1, corr, pval, fdr, ns))
             data_cache['corr_index'][grp] = idx
-            del df  # free memory immediately
+            del df
             logger.info(f'  Correlation {grp}: {len(idx)} proteins indexed')
 
         mp = os.path.join(DATA_DIR,'machine','unified_LogisticRegression.pkl')
@@ -128,8 +126,14 @@ def load_data():
 
 def _query_correlation(protein_id, group, top_n=10):
     idx = data_cache.get('corr_index', {}).get(group, {})
-    results = idx.get(protein_id, [])
-    return results[:top_n]
+    tuples = idx.get(protein_id, [])
+    return [{
+        'partner':     t[0],
+        'correlation': _safe(t[1]),
+        'p_value':     _safe(t[2]),
+        'fdr':         _safe(t[3]),
+        'n_studies':   t[4],
+    } for t in tuples[:top_n]]
 
 
 def _parse_heatmap_row(row, hm_cols):
