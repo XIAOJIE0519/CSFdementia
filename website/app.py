@@ -470,16 +470,12 @@ def ml_predict():
         return jsonify({'error': str(e)}), 500
 
 
-if __name__ == '__main__':
-    if load_data():
-        app.run(debug=True, host='0.0.0.0', port=5000)
-    else:
-        logger.error("Data load failed.")
+# Load data once at module level (works for both direct run and gunicorn)
+logger.info("Loading data...")
+if not load_data():
+    logger.error("Data load failed!")
 else:
-    # WSGI mode (gunicorn): load data in master process when using --preload,
-    # or in each worker otherwise. Use --preload flag with gunicorn for best performance.
-    logger.info("WSGI startup: loading data...")
-    if not load_data():
-        logger.error("Data load failed!")
-    else:
-        logger.info("Data loaded, app ready.")
+    logger.info("Data loaded, app ready.")
+
+if __name__ == '__main__':
+    app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)
