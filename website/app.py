@@ -176,13 +176,16 @@ def _parse_heatmap_row(corr_row, pval_row, hm_cols):
             continue
         corr_val = corr_row.get(col)
         if col in CELL_TYPE_COLS:
-            pval = pval_by_pos.get(col)
+            # Cell-type ORA: corr sheet stores the p-value directly
+            pval = corr_row.get(col)
             traits.append({'trait': col, 'type': 'cell_type_ora',
                            'p_value': _safe(float(pval)) if pval is not None and pd.notna(pval) else None,
                            'correlation': None, 'n_studies': None})
         elif col.startswith('study_'):
+            # Conservancy: corr sheet stores the value directly
+            val = corr_row.get(col)
             traits.append({'trait': col, 'type': 'conservancy',
-                           'n_studies': _safe(float(corr_val)) if corr_val is not None and pd.notna(corr_val) else None,
+                           'n_studies': _safe(float(val)) if val is not None and pd.notna(val) else None,
                            'correlation': None, 'p_value': None})
         else:
             pval = pval_by_pos.get(col)
