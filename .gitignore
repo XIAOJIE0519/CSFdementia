@@ -1,0 +1,40 @@
+# R related
+*.Rproj
+.Rproj.user/
+*.rds
+*.rda
+
+# Python related
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Data files
+*.csv
+*.txt
+*.tsv
+*.xlsx
+*.xls
+*.json
+
+# Image files
+*.png
+*.jpg
+*.jpeg
+*.pdf
+*.svg
+*.gif
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
